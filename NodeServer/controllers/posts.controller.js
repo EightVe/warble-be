@@ -452,12 +452,13 @@ export const addComment = async (req, res) => {
 
       // ✅ **Return populated reply**
       const populatedReply = await Comment.findById(replyTo).populate("replies.commenterId", "firstName lastName avatar username");
-
-      return res.status(201).json({
-        success: true,
+      io.to(postId).emit("newReply", {
+        postId,
+        commentId: replyTo,
         reply: populatedReply.replies[populatedReply.replies.length - 1],
+        commentsCount : post.comments.length
       });
-
+      return res.status(201).json({ success: true, reply: populatedReply.replies[populatedReply.replies.length - 1] });
     } else {
       // 🚀 Normal comment
       let comment = await Comment.create({
@@ -515,6 +516,7 @@ export const addComment = async (req, res) => {
           }
         }
       }
+      io.to(postId).emit("newComment", { postId, comment, commentsCount : post.comments.length });
 
       return res.status(201).json({ success: true, comment });
     }
@@ -556,13 +558,13 @@ export const getPostComments = async (req, res) => {
 
     console.log(`Fetching comments for Post ID: ${postId}, Page: ${page}, Limit: ${limit}, Skip: ${skip}`);
 
-    const comments = await Comment.find({ postId })
+    const comments = await Comment.find({ postId, isDeleted: false })
       .populate("commenterId", "firstName lastName avatar username")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
 
-    const totalComments = await Comment.countDocuments({ postId });
+    const totalComments = await Comment.countDocuments({ postId, isDeleted: false });
     const censorText = (text) => {
       let censoredText = text;
       BAD_WORDS.forEach((word) => {
@@ -696,19 +698,16 @@ export const deleteComment = async (req, res) => {
     const { commentId } = req.params;
     const userId = req.user.id;
 
-    // Find the comment
     const comment = await Comment.findById(commentId);
     if (!comment) {
       return res.status(404).json({ success: false, message: "Comment not found" });
     }
 
-    // Find the post associated with the comment
     const post = await Post.findById(comment.postId);
     if (!post) {
       return res.status(404).json({ success: false, message: "Post not found" });
     }
 
-    // Check if the user is the comment owner, post owner, or an admin
     const isAdmin = req.user.isAdmin;
     const isCommentOwner = comment.commenterId.toString() === userId;
     const isPostOwner = post.postOwner.toString() === userId;
@@ -717,26 +716,36 @@ export const deleteComment = async (req, res) => {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
-    // 🚀 If the comment has replies, remove them from `post.comments` too
-    if (comment.replies.length > 0) {
-      comment.replies.forEach((reply) => {
-        post.comments = post.comments.filter((id) => id.toString() !== reply._id.toString());
-      });
+    comment.isDeleted = true;
+    await comment.save();
+
+    // 🚀 Emit real-time deletion event
+    io.to(comment.postId.toString()).emit("commentDeleted", { postId: comment.postId.toString(), commentId });
+
+
+    // 🚀 Send notification if deleted by an admin
+    if (isAdmin) {
+      await sendNotification(
+        comment.commenterId.toString(),
+        userId,
+        "commentDeleted",
+        `Deleted by Admin: ${req.user.firstName} ${req.user.lastName}`,
+        "Your comment has been removed by an admin.",
+        req.user.avatar, 
+        commentId,
+        comment.postId.toString(),
+        true, // Force modal to open
+        `Deleted by Admin: ${req.user.firstName} ${req.user.lastName}`
+      );
     }
 
-    // 🚀 Remove the comment itself from `post.comments`
-    post.comments = post.comments.filter((id) => id.toString() !== commentId);
-    await post.save();
-
-    // 🚀 Finally, delete the comment
-    await Comment.findByIdAndDelete(commentId);
-
-    return res.status(200).json({ success: true, message: "Comment deleted successfully" });
+    return res.status(200).json({ success: true, message: "Comment soft deleted successfully" });
   } catch (error) {
     console.error("❌ Error deleting comment:", error);
     res.status(500).json({ success: false, message: "Failed to delete comment" });
   }
 };
+
 
 
 
@@ -951,12 +960,15 @@ export const getReplies = async (req, res) => {
       return res.status(404).json({ success: false, message: "Comment not found" });
     }
 
-    const totalReplies = comment.replies.length;
-    const skip = (page - 1) * limit;
-    
-    console.log(`✅ Found ${totalReplies} total replies. Fetching from ${skip} to ${skip + limit}`);
+    // ✅ Filter out deleted replies
+    const filteredReplies = comment.replies.filter((reply) => !reply.isDeleted);
 
-    let replies = comment.replies.slice(skip, skip + limit).map((reply) => ({
+    const totalReplies = filteredReplies.length;
+    const skip = (page - 1) * limit;
+
+    console.log(`✅ Found ${totalReplies} valid replies (excluding deleted ones). Fetching from ${skip} to ${skip + limit}`);
+
+    let replies = filteredReplies.slice(skip, skip + limit).map((reply) => ({
       ...reply.toObject(),
       content: isAdmin ? reply.content : reply.includesBadWords ? censorText(reply.content) : reply.content,
     }));
@@ -981,42 +993,64 @@ export const deleteReply = async (req, res) => {
     const { commentId, replyId } = req.params;
     const userId = req.user.id;
 
-    // Find the parent comment
-    const parentComment = await Comment.findById(commentId);
-    if (!parentComment) {
+    const comment = await Comment.findById(commentId);
+    if (!comment) {
       return res.status(404).json({ success: false, message: "Comment not found" });
     }
 
-    // Find the reply index
-    const replyIndex = parentComment.replies.findIndex((reply) => reply._id.toString() === replyId);
+    const post = await Post.findById(comment.postId);
+    if (!post) {
+      return res.status(404).json({ success: false, message: "Post not found" });
+    }
+
+    const replyIndex = comment.replies.findIndex(reply => reply._id.toString() === replyId);
     if (replyIndex === -1) {
       return res.status(404).json({ success: false, message: "Reply not found" });
     }
 
-    // Ensure only the reply owner or an admin can delete
     const isAdmin = req.user.isAdmin;
-    const isReplyOwner = parentComment.replies[replyIndex].commenterId.toString() === userId;
-    if (!isAdmin && !isReplyOwner) {
+    const isReplyOwner = comment.replies[replyIndex].commenterId.toString() === userId;
+    const isPostOwner = post.postOwner.toString() === userId;
+
+    if (!isAdmin && !isReplyOwner && !isPostOwner) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
-    // 🚀 Remove reply from the parent comment
-    parentComment.replies.splice(replyIndex, 1);
-    await parentComment.save();
+    // ✅ Soft delete the reply (similar to comments)
+    comment.replies[replyIndex].isDeleted = true;
+    await comment.save();
 
-    // 🚀 Find the post and remove the reply's ID from `post.comments`
-    const post = await Post.findById(parentComment.postId);
-    if (post) {
-      post.comments = post.comments.filter((id) => id.toString() !== replyId);
-      await post.save();
+    // ✅ Emit real-time reply deletion to **post room**
+    io.to(comment.postId.toString()).emit("replyDeleted", {
+      postId: comment.postId.toString(),
+      commentId,
+      replyId
+    });
+
+    // ✅ Notify user if an admin deleted the reply
+    if (isAdmin) {
+      await sendNotification(
+        comment.replies[replyIndex].commenterId.toString(),
+        userId,
+        "replyDeleted",
+        `Deleted by Admin: ${req.user.firstName} ${req.user.lastName}`,
+        "Your reply has been removed by an admin.",
+        req.user.avatar, 
+        replyId,
+        comment.postId.toString(),
+        true
+      );
     }
 
-    return res.status(200).json({ success: true, message: "Reply deleted successfully" });
+    return res.status(200).json({ success: true, message: "Reply soft deleted successfully" });
   } catch (error) {
     console.error("❌ Error deleting reply:", error);
     res.status(500).json({ success: false, message: "Failed to delete reply" });
   }
 };
+
+
+
 
 
 

@@ -35,6 +35,7 @@ const commentSchema = new mongoose.Schema(
             type: Boolean, // Store image URL
             required: true,
           },
+          isDeleted: { type: Boolean, default: false },
         }
       ],
     image: {
@@ -45,6 +46,7 @@ const commentSchema = new mongoose.Schema(
         type: Boolean, // Store image URL
         required: true,
       },
+      isDeleted: { type: Boolean, default: false },
     video: {
       type: String, // Store video URL
       required: false,

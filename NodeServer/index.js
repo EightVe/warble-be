@@ -68,22 +68,39 @@ let onlineUsers = {};
 io.on("connection", async (socket) => {
   const userId = socket.handshake.query.userId;
 
-    socket.on("joinPostRoom", (postId) => {
-      console.log(`👥 User ${socket.id} joining post room: ${postId}`);
-      socket.join(postId);
-    });
+  socket.on("joinPostRoom", (postId) => {
+    console.log(`👥 User ${socket.id} joined post room: ${postId}`);
+    socket.join(postId); // ✅ Joins a dynamic room based on postId
+  });
+
+  // ✅ Leave post room when user navigates away
+  socket.on("leavePostRoom", (postId) => {
+    console.log(`👤 User ${socket.id} left post room: ${postId}`);
+    socket.leave(postId);
+  });
+
+  // ✅ Broadcast new comments only to users in the same post room
+  socket.on("newComment", ({ postId, comment }) => {
+    console.log(`📢 Broadcasting new comment to room: ${postId}`);
+    io.to(postId).emit("newComment", { postId, comment });
+  });
+
+  // ✅ Broadcast new replies only to users in the same post room
+  socket.on("newReply", ({ postId, commentId, reply }) => {
+    console.log(`📢 Broadcasting new reply to room: ${postId}`);
+    io.to(postId).emit("newReply", { postId, commentId, reply });
+  });
+  socket.on("commentDeleted", ({ postId, commentId }) => {
+    console.log(`📢 Broadcasting comment deletion to room: ${postId}`);
+    io.to(postId).emit("commentDeleted", { postId, commentId });
+  });
   
-    // ✅ Broadcast new comments to ALL users in the post room
-    socket.on("newComment", ({ postId, comment }) => {
-      console.log(`📢 Broadcasting new comment to room: ${postId}`);
-      io.to(postId).emit("newComment", { postId, comment });
-    });
-  
-    // ✅ Broadcast new replies to ALL users in the post room
-    socket.on("newReply", ({ postId, commentId, reply }) => {
-      console.log(`📢 Broadcasting new reply to room: ${postId}`);
-      io.to(postId).emit("newReply", { postId, commentId, reply });
-    });
+
+  // 🚀 Broadcast reply deletion to post room
+  socket.on("replyDeleted", ({ postId, commentId, replyId }) => {
+    console.log(`📢 Broadcasting reply deletion to room: ${postId}`);
+    io.emit("replyDeleted", { postId, commentId, replyId });
+  });
   if (userId) {
     try {
       // ✅ Update or create user status in the database
@@ -92,7 +109,6 @@ io.on("connection", async (socket) => {
         { socketId: socket.id, status: "online" },
         { upsert: true, new: true }
       );
-
       // ✅ Update local memory
       onlineUsers[userId] = { socketId: socket.id, status: "online" };
 
