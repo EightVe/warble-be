@@ -63,25 +63,76 @@ app.use((err, req, res, next) => {
 
 // ✅ Store online users in memory
 let onlineUsers = {};
-
-// ✅ Handle WebSocket Connections
+let waitingUsers = [];
+let activePairs = new Map();
+let previousMatches = new Map();
 io.on("connection", async (socket) => {
   const userId = socket.handshake.query.userId;
 
+  // if (onlineUsers[userId] && onlineUsers[userId].socketId !== socket.id) {
+  //   console.log(`⚠️ Duplicate connection detected for User ${userId}, disconnecting previous session...`);
+  //   io.to(onlineUsers[userId].socketId).emit("forceDisconnect"); // ✅ Disconnect previous session
+  // }
+  // onlineUsers[userId] = { socketId: socket.id, status: "online" };
+  
+  socket.on("startChat", () => {
+    if (waitingUsers.length > 0) {
+      let partner = waitingUsers.find((user) => user !== socket.id);
+      if (!partner) {
+        waitingUsers.push(socket.id);
+        return;
+      }
+      
+      waitingUsers = waitingUsers.filter((user) => user !== partner);
+      activePairs.set(socket.id, partner);
+      activePairs.set(partner, socket.id);
+
+      previousMatches.set(socket.id, partner);
+      previousMatches.set(partner, socket.id);
+
+      io.to(socket.id).emit("matchFound", partner);
+      io.to(partner).emit("matchFound", socket.id);
+    } else {
+      waitingUsers.push(socket.id);
+    }
+  });
+
+  socket.on("skipChat", () => {
+    const partner = activePairs.get(socket.id);
+    if (partner) {
+      io.to(partner).emit("partnerDisconnected");
+      activePairs.delete(partner);
+      activePairs.delete(socket.id);
+    }
+    waitingUsers.push(socket.id);
+    socket.emit("skipSuccess");
+    socket.emit("startChat");
+  });
+
+  socket.on("endChat", () => {
+    const partner = activePairs.get(socket.id);
+    if (partner) {
+      io.to(partner).emit("partnerDisconnected");
+      activePairs.delete(partner);
+    }
+    waitingUsers = waitingUsers.filter((id) => id !== socket.id);
+  });
+
+
+
   socket.on("joinPostRoom", (postId) => {
-    console.log(`👥 User ${socket.id} joined post room: ${postId}`);
+
     socket.join(postId); // ✅ Joins a dynamic room based on postId
   });
 
   // ✅ Leave post room when user navigates away
   socket.on("leavePostRoom", (postId) => {
-    console.log(`👤 User ${socket.id} left post room: ${postId}`);
+
     socket.leave(postId);
   });
-
   // ✅ Broadcast new comments only to users in the same post room
   socket.on("newComment", ({ postId, comment }) => {
-    console.log(`📢 Broadcasting new comment to room: ${postId}`);
+
 
     if (comment.includesBadWords) {
       // 🚀 Emit censored version for non-admins
@@ -93,10 +144,19 @@ io.on("connection", async (socket) => {
       io.to(postId).emit("newComment", { postId, comment });
     }
   });
+  socket.on("postLiked", ({ postId, likes }) => {
 
+    io.to(postId).emit("postLiked", { postId, likes });
+  });
+
+  // ✅ Listen for post unlikes and update clients
+  socket.on("postUnliked", ({ postId, likes }) => {
+
+    io.to(postId).emit("postUnliked", { postId, likes });
+  });
   // ✅ Broadcast **new reply** & censor it if needed
   socket.on("newReply", ({ postId, commentId, reply }) => {
-    console.log(`📢 Broadcasting new reply to room: ${postId}`);
+
 
     if (reply.includesBadWords) {
       // 🚀 Emit censored version for non-admins
@@ -110,14 +170,14 @@ io.on("connection", async (socket) => {
     }
   });
   socket.on("commentDeleted", ({ postId, commentId }) => {
-    console.log(`📢 Broadcasting comment deletion to room: ${postId}`);
+
     io.to(postId).emit("commentDeleted", { postId, commentId });
   });
   
 
   // 🚀 Broadcast reply deletion to post room
   socket.on("replyDeleted", ({ postId, commentId, replyId }) => {
-    console.log(`📢 Broadcasting reply deletion to room: ${postId}`);
+
     io.emit("replyDeleted", { postId, commentId, replyId });
   });
   if (userId) {
@@ -131,7 +191,7 @@ io.on("connection", async (socket) => {
       // ✅ Update local memory
       onlineUsers[userId] = { socketId: socket.id, status: "online" };
 
-      console.log(`🟢 User ${userId} is ONLINE`);
+
 
       // ✅ Broadcast updated online users list
       const users = await UserStatus.find({});
@@ -141,7 +201,7 @@ io.on("connection", async (socket) => {
       const unreadNotifications = await Notification.find({ userId, read: false });
 
       if (unreadNotifications.length > 0) {
-        console.log(`📬 Sending stored notifications to user: ${userId}`);
+
         io.to(socket.id).emit("newNotification", unreadNotifications);
       }
     } catch (error) {
@@ -154,7 +214,6 @@ io.on("connection", async (socket) => {
       await UserStatus.findOneAndUpdate({ userId }, { status: "away" });
 
       onlineUsers[userId].status = "away";
-      console.log(`🟡 User ${userId} is AWAY`);
 
       const users = await UserStatus.find({});
       io.emit("onlineUsers", users);
@@ -166,7 +225,7 @@ io.on("connection", async (socket) => {
       await UserStatus.findOneAndUpdate({ userId }, { status: "online" });
 
       onlineUsers[userId].status = "online";
-      console.log(`🟢 User ${userId} is BACK ONLINE`);
+
 
       const users = await UserStatus.find({});
       io.emit("onlineUsers", users);
@@ -175,7 +234,7 @@ io.on("connection", async (socket) => {
 
   socket.on("disconnect", async () => {
     if (userId) {
-      console.log(`🔴 User ${userId} is OFFLINE`);
+
 
       await UserStatus.findOneAndUpdate({ userId }, { status: "offline" });
 
@@ -184,6 +243,12 @@ io.on("connection", async (socket) => {
       const users = await UserStatus.find({});
       io.emit("onlineUsers", users);
     }
+    const partner = activePairs.get(socket.id);
+    if (partner) {
+      io.to(partner).emit("partnerDisconnected");
+      activePairs.delete(partner);
+    }
+    waitingUsers = waitingUsers.filter((id) => id !== socket.id);
   });
 });
 

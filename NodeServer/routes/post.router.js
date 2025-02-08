@@ -1,6 +1,6 @@
 import express from 'express';
 import {createPost, deletePost, editPost,getUserPosts,getAllPosts,getPostsOfYourFollowList,getSinglePost,likePost,removeLikePost,checkLikeStatus,addComment,getPostComments,deleteComment,
-    likeComment,unlikeComment,checkCommentLikeStatus,addReply,getReplies,deleteReply,fetchRelatedLikes,getSinglePostComments
+    likeComment,unlikeComment,checkCommentLikeStatus,addReply,getReplies,deleteReply,fetchRelatedLikes,getSinglePostComments,restoreComment
 } from '../controllers/posts.controller.js';
 import { authenticateToken } from '../utils/verifyUser.js';
 const router = express.Router();
@@ -24,6 +24,7 @@ router.post("/add-comment/:postId", authenticateToken, addComment);
 router.get("/get-comments/:postId", getPostComments);
 router.get("/get-single-comments/:postId", getSinglePostComments);
 router.delete("/delete-comment/:commentId", authenticateToken, deleteComment);
+router.delete("/restore-comment/:commentId", authenticateToken, restoreComment);
 
 
 router.post("/comment-like/:commentId", authenticateToken, likeComment);

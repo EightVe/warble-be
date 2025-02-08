@@ -244,6 +244,12 @@ export const likePost = async (req, res) => {
     post.likes += 1;
     await post.save();
 
+    const updatedLikes = await Like.find({ relatedPost: postId }).populate("likerId", "username firstName lastName avatar");
+
+    // ✅ Emit event for real-time update
+    io.to(postId).emit("postLiked", { postId, likes: updatedLikes });
+
+
     // ✅ Prevent sending notifications for self-likes
     if (post.postOwner.toString() === userId) {
       return res.status(200).json({ success: true, liked: true, likes: post.likes, message: "Self-like, no notification sent" });
@@ -315,7 +321,10 @@ export const removeLikePost = async (req, res) => {
       post.likes = Math.max(post.likes - 1, 0);
       await post.save();
     }
+    const updatedLikes = await Like.find({ relatedPost: postId }).populate("likerId", "username firstName lastName avatar");
 
+    // ✅ Emit event for real-time unlike
+    io.to(postId).emit("postUnliked", { postId, likes: updatedLikes });
     return res.status(200).json({ success: true, liked: false, likes: post.likes });
   } catch (error) {
     console.error("Error removing like:", error);
@@ -412,6 +421,7 @@ export const addComment = async (req, res) => {
 
       // ✅ Increment total comment count in the post
       post.comments.push(replyId);
+      post.commentCount += 1;
       await post.save();
 
       // 🚀 Prevent duplicate notifications
@@ -471,6 +481,7 @@ export const addComment = async (req, res) => {
         postId,
         commentId: replyTo, // ✅ Ensure the comment ID is sent
         reply: replyToEmit,
+        commentsCount: post.commentCount,
       });
       
       return res.status(201).json({ success: true, reply: replyToEmit });
@@ -490,6 +501,7 @@ export const addComment = async (req, res) => {
 
       // ✅ Increment total comment count in the post
       post.comments.push(comment._id);
+      post.commentCount += 1;
       await post.save();
 
       // ✅ Send notification to **post owner**
@@ -538,7 +550,7 @@ export const addComment = async (req, res) => {
       io.to(postId).emit(includesBadWords ? "CommentReplyBadWord" : "newComment", {
         postId,
         comment: commentToEmit,
-        commentsCount: post.comments.length
+        commentsCount: post.commentCount,
       });
 
       return res.status(201).json({ success: true, comment: commentToEmit });
@@ -741,13 +753,13 @@ export const deleteComment = async (req, res) => {
     if (!isAdmin && !isCommentOwner && !isPostOwner) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
-
+    const totalReplies = comment.replies ? comment.replies.length : 0;
+    post.commentCount = Math.max(0, post.commentCount - (1 + totalReplies)); 
     comment.isDeleted = true;
     await comment.save();
-    post.commentsCount = await Comment.countDocuments({ postId: comment.postId, isDeleted: false });
     await post.save();
     // 🚀 Emit real-time deletion event
-    io.to(comment.postId.toString()).emit("commentDeleted", { postId: comment.postId.toString(), commentId });
+    io.to(comment.postId.toString()).emit("commentDeleted", { postId: comment.postId.toString(), commentId,commentsCount: post.commentCount, });
 
 
     // 🚀 Send notification if deleted by an admin
@@ -1046,7 +1058,8 @@ export const deleteReply = async (req, res) => {
     if (!isAdmin && !isReplyOwner && !isPostOwner) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
-
+    post.commentCount = Math.max(0, post.commentCount - 1);
+    await post.save();
     // ✅ Soft delete the reply (similar to comments)
     comment.replies[replyIndex].isDeleted = true;
     await comment.save();
@@ -1055,7 +1068,8 @@ export const deleteReply = async (req, res) => {
     io.to(comment.postId.toString()).emit("replyDeleted", {
       postId: comment.postId.toString(),
       commentId,
-      replyId
+      replyId,
+      commentsCount: post.commentCount,
     });
 
     // ✅ Notify user if an admin deleted the reply
@@ -1081,6 +1095,33 @@ export const deleteReply = async (req, res) => {
 };
 
 
+export const restoreComment = async (req, res) => {
+  try {
+    const { commentId } = req.params;
+    const comment = await Comment.findById(commentId);
+    if (!comment) {
+      return res.status(404).json({ success: false, message: "Comment not found" });
+    }
+
+    const post = await Post.findById(comment.postId);
+    if (!post) {
+      return res.status(404).json({ success: false, message: "Post not found" });
+    }
+
+    if (comment.isDeleted) {
+      comment.isDeleted = false;
+      await comment.save();
+
+      post.commentCount += 1 + (comment.replies ? comment.replies.length : 0);
+      await post.save();
+    }
+
+    return res.status(200).json({ success: true, message: "Comment restored successfully" });
+  } catch (error) {
+    console.error("❌ Error restoring comment:", error);
+    res.status(500).json({ success: false, message: "Failed to restore comment" });
+  }
+};
 
 
 

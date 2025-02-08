@@ -23,6 +23,8 @@
     "node-fetch": "^3.3.2",
     "nodemailer": "^6.9.14",
     "nodemon": "^3.1.4",
+    "peer": "^1.0.2",
+    "simple-peer": "^9.11.1",
     "socket.io": "^4.8.1",
     "zod": "^3.23.8"
   }
