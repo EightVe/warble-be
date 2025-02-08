@@ -82,13 +82,32 @@ io.on("connection", async (socket) => {
   // ✅ Broadcast new comments only to users in the same post room
   socket.on("newComment", ({ postId, comment }) => {
     console.log(`📢 Broadcasting new comment to room: ${postId}`);
-    io.to(postId).emit("newComment", { postId, comment });
+
+    if (comment.includesBadWords) {
+      // 🚀 Emit censored version for non-admins
+      io.to(postId).emit("CommentReplyBadWord", {
+        postId,
+        comment: { ...comment, content: "****" },
+      });
+    } else {
+      io.to(postId).emit("newComment", { postId, comment });
+    }
   });
 
-  // ✅ Broadcast new replies only to users in the same post room
+  // ✅ Broadcast **new reply** & censor it if needed
   socket.on("newReply", ({ postId, commentId, reply }) => {
     console.log(`📢 Broadcasting new reply to room: ${postId}`);
-    io.to(postId).emit("newReply", { postId, commentId, reply });
+
+    if (reply.includesBadWords) {
+      // 🚀 Emit censored version for non-admins
+      io.to(postId).emit("CommentReplyBadWord", {
+        postId,
+        commentId,
+        reply: { ...reply, content: "****" },
+      });
+    } else {
+      io.to(postId).emit("newReply", { postId, commentId, reply });
+    }
   });
   socket.on("commentDeleted", ({ postId, commentId }) => {
     console.log(`📢 Broadcasting comment deletion to room: ${postId}`);

@@ -361,15 +361,24 @@ export const addComment = async (req, res) => {
     const { postId } = req.params;
     const { content, replyTo, image, video } = req.body;
     const userId = req.user.id;
-
-    console.log(`📝 New Comment or Reply - User: ${userId}, Post: ${postId}, ReplyTo: ${replyTo || "None"}`);
-
+    const isAdmin = req.user?.isAdmin;
     // ✅ Check if post exists
     const post = await Post.findById(postId);
     if (!post) {
       return res.status(404).json({ success: false, message: "Post not found" });
     }
 
+    // ✅ Check for bad words
+    const includesBadWords = BAD_WORDS.some((word) =>
+      new RegExp(`\\b${word}\\b`, "i").test(content)
+    );
+    const censorText = (text) => {
+      return BAD_WORDS.reduce((acc, word) => {
+        const regex = new RegExp(`\\b${word}\\b`, "gi");
+        return acc.replace(regex, "****");
+      }, text);
+    };
+    const censoredContent = includesBadWords ? censorText(content) : content;
     // ✅ Extract mentioned usernames from the content (e.g., "@username")
     const mentionedUsernames = content.match(/@(\w+)/g)?.map((m) => m.slice(1)) || [];
 
@@ -394,7 +403,7 @@ export const addComment = async (req, res) => {
         _id: replyId,
         commenterId: userId,
         content,
-        includesBadWords: false,
+        includesBadWords,
         createdAt: new Date(),
       };
 
@@ -427,7 +436,7 @@ export const addComment = async (req, res) => {
         repliedNotificationSent = true;
       }
 
-      // ✅ Notify **mentioned users** in replies (only if "Replied to your comment" wasn't sent)
+      // ✅ Notify **mentioned users** in replies
       if (mentionedUsernames.length > 0) {
         const mentionedUsers = await User.find({ username: { $in: mentionedUsernames } });
 
@@ -452,13 +461,19 @@ export const addComment = async (req, res) => {
 
       // ✅ **Return populated reply**
       const populatedReply = await Comment.findById(replyTo).populate("replies.commenterId", "firstName lastName avatar username");
-      io.to(postId).emit("newReply", {
+      const replyToEmit = {
+        ...populatedReply.replies[populatedReply.replies.length - 1].toObject(),
+        content: isAdmin ? content : censoredContent, // ✅ Censor for non-admins
+      };
+      
+      // ✅ Always include `commentId` and `reply`
+      io.to(postId).emit(includesBadWords ? "CommentReplyBadWord" : "newReply", {
         postId,
-        commentId: replyTo,
-        reply: populatedReply.replies[populatedReply.replies.length - 1],
-        commentsCount : post.comments.length
+        commentId: replyTo, // ✅ Ensure the comment ID is sent
+        reply: replyToEmit,
       });
-      return res.status(201).json({ success: true, reply: populatedReply.replies[populatedReply.replies.length - 1] });
+      
+      return res.status(201).json({ success: true, reply: replyToEmit });
     } else {
       // 🚀 Normal comment
       let comment = await Comment.create({
@@ -467,7 +482,7 @@ export const addComment = async (req, res) => {
         content,
         image,
         video,
-        includesBadWords: false,
+        includesBadWords,
       });
 
       // 🚀 Populate `commenterId`
@@ -516,9 +531,17 @@ export const addComment = async (req, res) => {
           }
         }
       }
-      io.to(postId).emit("newComment", { postId, comment, commentsCount : post.comments.length });
+      const commentToEmit = {
+        ...comment.toObject(),
+        content: isAdmin ? content : censoredContent, // ✅ Censor for non-admins
+      };
+      io.to(postId).emit(includesBadWords ? "CommentReplyBadWord" : "newComment", {
+        postId,
+        comment: commentToEmit,
+        commentsCount: post.comments.length
+      });
 
-      return res.status(201).json({ success: true, comment });
+      return res.status(201).json({ success: true, comment: commentToEmit });
     }
   } catch (error) {
     console.error("❌ Error adding comment:", error);
@@ -545,11 +568,12 @@ export const addComment = async (req, res) => {
 
 
 
+
 export const getPostComments = async (req, res) => {
   try {
     const { postId } = req.params;
     const { userId } = req.query;
-    const user = await User.findById(userId); // Fetch user details
+    const user = await User.findById(userId);
     const isAdmin = user?.isAdmin;
 
     const page = parseInt(req.query.page) || 1;
@@ -565,6 +589,8 @@ export const getPostComments = async (req, res) => {
       .limit(limit);
 
     const totalComments = await Comment.countDocuments({ postId, isDeleted: false });
+
+    // ✅ Fix bad word filtering
     const censorText = (text) => {
       let censoredText = text;
       BAD_WORDS.forEach((word) => {
@@ -574,12 +600,11 @@ export const getPostComments = async (req, res) => {
       return censoredText;
     };
 
-    // ✅ Only censor text for non-admins
+    // ✅ Apply filtering for non-admins
     const commentsWithFilteredText = comments.map((comment) => ({
       ...comment.toObject(),
       content: isAdmin ? comment.content : comment.includesBadWords ? censorText(comment.content) : comment.content,
     }));
-
     return res.status(200).json({
       success: true,
       comments: commentsWithFilteredText,
@@ -590,6 +615,7 @@ export const getPostComments = async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to fetch comments" });
   }
 };
+
 
 
 export const getSinglePostComments = async (req, res) => {
@@ -718,7 +744,8 @@ export const deleteComment = async (req, res) => {
 
     comment.isDeleted = true;
     await comment.save();
-
+    post.commentsCount = await Comment.countDocuments({ postId: comment.postId, isDeleted: false });
+    await post.save();
     // 🚀 Emit real-time deletion event
     io.to(comment.postId.toString()).emit("commentDeleted", { postId: comment.postId.toString(), commentId });
 
@@ -751,10 +778,7 @@ export const deleteComment = async (req, res) => {
 
 export const likeComment = async (req, res) => {
   try {
-    console.log("🔹 Received Data:", req.body);
 const { postUID } = req.body;
-console.log("📌 Extracted postUID:", postUID);
-
     const { commentId } = req.params;
     const userId = req.user.id;
 
@@ -948,8 +972,9 @@ export const getReplies = async (req, res) => {
     console.log(`🔵 Fetching replies for Comment ID: ${commentId}, Page: ${page}, Limit: ${limit}`);
 
     const user = await User.findById(userId);
-    const isAdmin = user?.isAdmin;
+const isAdmin = req.user?.isAdmin;
 
+    console.log(isAdmin)
     const comment = await Comment.findById(commentId).populate({
       path: "replies.commenterId",
       select: "firstName lastName avatar username",
@@ -966,11 +991,17 @@ export const getReplies = async (req, res) => {
     const totalReplies = filteredReplies.length;
     const skip = (page - 1) * limit;
 
-    console.log(`✅ Found ${totalReplies} valid replies (excluding deleted ones). Fetching from ${skip} to ${skip + limit}`);
+    const censorText = (text) => {
+      return BAD_WORDS.reduce((acc, word) => {
+        const regex = new RegExp(`\\b${word}\\b`, "gi");
+        return acc.replace(regex, "****");
+      }, text);
+    };
 
+    // ✅ Apply censorship only for non-admin users
     let replies = filteredReplies.slice(skip, skip + limit).map((reply) => ({
       ...reply.toObject(),
-      content: isAdmin ? reply.content : reply.includesBadWords ? censorText(reply.content) : reply.content,
+      content: isAdmin ? reply.content : (reply.includesBadWords ? censorText(reply.content) : reply.content),
     }));
 
     console.log(`🟢 Sending ${replies.length} replies back to client.`);
@@ -980,12 +1011,12 @@ export const getReplies = async (req, res) => {
       replies,
       hasMore: skip + replies.length < totalReplies,
     });
-
   } catch (error) {
     console.error("❌ Error fetching replies:", error);
     res.status(500).json({ success: false, message: "Failed to fetch replies" });
   }
 };
+
 
 
 export const deleteReply = async (req, res) => {
