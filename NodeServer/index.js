@@ -17,6 +17,8 @@ import postRouter from './routes/post.router.js';
 import { Notification } from './models/notification.model.js';
 import notificationRoutes from './routes/notification.route.js'
 import { UserStatus } from './models/userStatus.model.js';
+import { PeerOnline } from './models/PeerOnline.model.js';
+import User from './models/user.model.js';
 dotenv.config();
 
 mongoose
@@ -66,36 +68,198 @@ let onlineUsers = {};
 let waitingUsers = [];
 let activePairs = new Map();
 let previousMatches = new Map();
+let PeerOnlineUsers = {};
+
 io.on("connection", async (socket) => {
   const userId = socket.handshake.query.userId;
 
-  // if (onlineUsers[userId] && onlineUsers[userId].socketId !== socket.id) {
-  //   console.log(`⚠️ Duplicate connection detected for User ${userId}, disconnecting previous session...`);
-  //   io.to(onlineUsers[userId].socketId).emit("forceDisconnect"); // ✅ Disconnect previous session
-  // }
-  // onlineUsers[userId] = { socketId: socket.id, status: "online" };
-  
-  socket.on("startChat", () => {
-    if (waitingUsers.length > 0) {
-      let partner = waitingUsers.find((user) => user !== socket.id);
-      if (!partner) {
-        waitingUsers.push(socket.id);
+  socket.emit("socketId", socket.id);
+
+  socket.on(
+    "initiateCall",
+    ({ targetId, signalData, senderId, senderName }) => {
+      io.to(targetId).emit("incomingCall", {
+        signal: signalData,
+        from: senderId,
+        name: senderName,
+      });
+    }
+  );
+
+  socket.on("changeMediaStatus", ({ mediaType, isActive }) => {
+    socket.broadcast.emit("mediaStatusChanged", {
+      mediaType,
+      isActive,
+    });
+  });
+
+  socket.on("sendMessage", ({ targetId, message, senderName }) => {
+    io.to(targetId).emit("receiveMessage", { message, senderName });
+  });
+
+  socket.on("answerCall", (data) => {
+    socket.broadcast.emit("mediaStatusChanged", {
+      mediaType: data.mediaType,
+      isActive: data.mediaStatus,
+    });
+    io.to(data.to).emit("callAnswered", data);
+  });
+
+  socket.on("terminateCall", ({ targetId }) => {
+    io.to(targetId).emit("callTerminated");
+  });
+
+
+  socket.on("joinPeerPage", async ({ userId, username, profilePic }) => {
+    if (!userId || !username) {
+        console.error("❌ Missing user data on joinPeerPage:", { userId, username, profilePic });
         return;
-      }
-      
-      waitingUsers = waitingUsers.filter((user) => user !== partner);
-      activePairs.set(socket.id, partner);
-      activePairs.set(partner, socket.id);
+    }
 
-      previousMatches.set(socket.id, partner);
-      previousMatches.set(partner, socket.id);
+    try {
+        const existingUser = await PeerOnline.findOne({ userId });
 
-      io.to(socket.id).emit("matchFound", partner);
-      io.to(partner).emit("matchFound", socket.id);
-    } else {
-      waitingUsers.push(socket.id);
+        if (!existingUser) {
+            // ✅ If the user is new, create an entry
+            await PeerOnline.create({
+                userId,
+                socketId: socket.id,
+                username,
+                profilePic,
+                status: "online"
+            });
+        } else {
+            // ✅ If the user already exists, update the socket ID & status
+            await PeerOnline.updateOne(
+                { userId },
+                { socketId: socket.id, status: "online" }
+            );
+        }
+
+        console.log(`✅ User added to PeerOnline DB: ${userId} (${username})`);
+    } catch (error) {
+        console.error("❌ Error saving user to PeerOnline:", error);
+    }
+
+    // Emit updated peer list
+    const allPeers = await PeerOnline.find({ status: "online" });
+    io.emit("updatePeerList", allPeers);
+});
+
+
+
+
+  socket.on("cameraStateChange", (state) => {
+    const partner = activePairs.get(socket.id);
+    if (partner) {
+      io.to(partner).emit("partnerCameraStateChange", state);
     }
   });
+
+  socket.on("micStateChange", (state) => {
+    const partner = activePairs.get(socket.id);
+    if (partner) {
+      io.to(partner).emit("partnerMicStateChange", state);
+    }
+  });
+  socket.on("offer", (offer, partnerId) => {
+    console.log(`📨 Sending offer from ${socket.id} to ${partnerId}`);
+    io.to(partnerId).emit("offer", offer, socket.id);
+});
+
+socket.on("answer", (answer, partnerId) => {
+    console.log(`📨 Sending answer from ${socket.id} to ${partnerId}`);
+    io.to(partnerId).emit("answer", answer);
+});
+
+socket.on("iceCandidate", (candidate, partnerId) => {
+    console.log(`📨 Sending ICE candidate from ${socket.id} to ${partnerId}`);
+    io.to(partnerId).emit("iceCandidate", candidate);
+});
+
+
+  socket.on("newStream", ({ userId, stream }) => {
+    const partner = activePairs.get(socket.id);
+    if (partner) {
+        io.to(partner).emit("partnerStream", { stream });
+    }
+});
+
+  socket.on('leavePeerPage', async () => {
+    if (PeerOnlineUsers[socket.id]) {
+      await PeerOnline.findOneAndUpdate(
+        { userId: PeerOnlineUsers[socket.id].userId },
+        { status: 'offline' }
+      );
+      delete PeerOnlineUsers[socket.id];
+      io.emit('updatePeerList', Object.values(PeerOnlineUsers));
+    }
+  });
+  socket.on("startChat", async () => {
+    console.log("🔎 Waiting users before matching:", waitingUsers);
+
+    if (waitingUsers.length > 0) {
+        let partner = waitingUsers.find((user) => user !== socket.id);
+        if (!partner) {
+            waitingUsers.push(socket.id);
+            return;
+        }
+
+        // ✅ Ensure both users exist in PeerOnline before proceeding
+        const userOnline = await PeerOnline.findOne({ socketId: socket.id });
+        const partnerOnline = await PeerOnline.findOne({ socketId: partner });
+
+        if (!userOnline || !partnerOnline) {
+            console.error("❌ Online user records missing in PeerOnline.");
+            return;
+        }
+
+        // Remove matched users from waiting list
+        waitingUsers = waitingUsers.filter((user) => user !== partner);
+        activePairs.set(socket.id, partner);
+        activePairs.set(partner, socket.id);
+
+        try {
+            // ✅ Fetch user details from the User collection
+            const userUser = await User.findOne({ _id: userOnline.userId }).select("username avatar");
+            const partnerUser = await User.findOne({ _id: partnerOnline.userId }).select("username avatar");
+
+            if (userUser && partnerUser) {
+                const userDetails = {
+                    userId: userOnline.userId,
+                    socketId: userOnline.socketId,
+                    username: userUser.username,
+                    profilePic: userUser.avatar,
+                    status: userOnline.status
+                };
+
+                const partnerDetails = {
+                    userId: partnerOnline.userId,
+                    socketId: partnerOnline.socketId,
+                    username: partnerUser.username,
+                    profilePic: partnerUser.avatar,
+                    status: partnerOnline.status
+                };
+
+                console.log(`✅ Match found: ${userDetails.username} ⇄ ${partnerDetails.username}`);
+
+                io.to(socket.id).emit("matchFound", { partnerId: partner, partnerDetails });
+                io.to(partner).emit("matchFound", { partnerId: socket.id, partnerDetails: userDetails });
+            } else {
+                console.error("❌ User details missing in the database.");
+            }
+        } catch (error) {
+            console.error("❌ Database error while fetching partner details:", error);
+        }
+    } else {
+        waitingUsers.push(socket.id);
+    }
+});
+
+
+
+
+
 
   socket.on("skipChat", () => {
     const partner = activePairs.get(socket.id);
@@ -243,12 +407,30 @@ io.on("connection", async (socket) => {
       const users = await UserStatus.find({});
       io.emit("onlineUsers", users);
     }
-    const partner = activePairs.get(socket.id);
-    if (partner) {
-      io.to(partner).emit("partnerDisconnected");
-      activePairs.delete(partner);
-    }
-    waitingUsers = waitingUsers.filter((id) => id !== socket.id);
+    try {
+      const user = await PeerOnline.findOne({ socketId: socket.id });
+
+      if (user) {
+          await PeerOnline.findOneAndUpdate({ socketId: socket.id }, { status: 'offline' });
+
+          console.log(`👤 User ${user.username} is now offline.`);
+      }
+
+      // Remove from active pairs and waiting list
+      const partner = activePairs.get(socket.id);
+      if (partner) {
+          io.to(partner).emit("partnerDisconnected");
+          activePairs.delete(partner);
+      }
+
+      waitingUsers = waitingUsers.filter((id) => id !== socket.id);
+
+      // Emit updated peer list
+      const allPeers = await PeerOnline.find({ status: 'online' });
+      io.emit('updatePeerList', allPeers);
+  } catch (error) {
+      console.error("❌ Error handling user disconnect:", error);
+  }
   });
 });
 
