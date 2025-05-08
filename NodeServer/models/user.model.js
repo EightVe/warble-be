@@ -16,6 +16,31 @@ const userSchema = new mongoose.Schema(
         type: String,
         required: true,
       },
+      userAge: { 
+        type: Number, 
+        required: false,
+      },
+      userBirthDay: { 
+        type: String, 
+        required: false, 
+      },
+      userBirthMonth: { 
+        type: String, 
+        required: false, 
+      },
+      userBirthYear: { 
+        type: String, 
+        required: false, 
+      },
+      userFullBirthday: { 
+        type: String, 
+        required: false, 
+      },
+      gender: {
+        type: String,
+        enum: ['male', 'female'],
+        required: false,
+      },
       lastName: {
         type: String,
         required: true,
@@ -38,7 +63,31 @@ const userSchema = new mongoose.Schema(
         type: Boolean,
         default : false,
       },
+      isFinishedSteps: {
+        type: Boolean,
+        default : false,
+      },
+      isBanned: {
+        type: Boolean,
+        default : false,
+      },
       twoFactorEnabled : {
+        type: Boolean,
+        default : false,
+      },
+      accountHealth :{
+        type: Number,
+        default : 100,
+      },
+      isUserFirstStepsCompleted : {
+        type: Boolean,
+        default : false,
+      },
+      lastTimePasswordEdited: {
+        type: Date,
+        default: null,
+      },
+      isVerified : {
         type: Boolean,
         default : false,
       },

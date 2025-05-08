@@ -18,7 +18,7 @@ export const sendOtpCode = async (user) => {
   const mailOptions = {
     from: "vexobyte8@gmail.com",
     to: user.emailAddress,
-    subject: 'Your OTP Code',
+    subject: 'Warble - Two Factor Authentication OTP Code Request',
     text: `Your TwoFac OTP code is ${otp}`,
   };
 

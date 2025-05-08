@@ -11,6 +11,8 @@ import authRouter from './routes/auth.route.js';
 import guestRouter from './routes/guest.route.js';
 import sessionRouter from './routes/session.route.js';
 import protectedRoutes from './routes/protected.route.js';
+import dashboardRouter from './routes/admin.route.js'
+import reportRouter from './routes/report.route.js'
 import userRouter from './routes/user.route.js';
 import verificationsRouter from './routes/verifications.route.js';
 import postRouter from './routes/post.router.js';
@@ -18,7 +20,8 @@ import { Notification } from './models/notification.model.js';
 import notificationRoutes from './routes/notification.route.js'
 import { UserStatus } from './models/userStatus.model.js';
 import { PeerOnline } from './models/PeerOnline.model.js';
-import User from './models/user.model.js';
+import axios from 'axios';
+import setupWebRTC from './utils/webrtcMatching.js'; 
 dotenv.config();
 
 mongoose
@@ -32,15 +35,98 @@ const server = http.createServer(app); // Ensure Express and WebSocket share the
 
 const io = new Server(server, {
   cors: {
-    origin: process.env.APP_ORIGIN, // Ensure this matches your frontend origin
-    methods: ["GET", "POST","PUT","DELETE"],
+    origin: [
+// Main domain
+"https://warble.chat",
+"http://warble.chat",
+"https://www.warble.chat",
+"http://www.warble.chat",
+
+// ID subdomain
+"https://id.warble.chat",
+"http://id.warble.chat",
+"https://www.id.warble.chat",
+"http://www.id.warble.chat",
+
+// Dashboard subdomain
+"https://dashboard.warble.chat",
+"http://dashboard.warble.chat",
+"https://www.dashboard.warble.chat",
+"http://www.dashboard.warble.chat",
+
+// Support subdomain
+"https://support.warble.chat",
+"http://support.warble.chat",
+"https://www.support.warble.chat",
+"http://www.support.warble.chat",
+
+// App subdomain
+"https://app.warble.chat",
+"http://app.warble.chat",
+"https://www.app.warble.chat",
+"http://www.app.warble.chat",
+
+// Demo subdomain
+"https://demo9alawat.warble.chat",
+"http://demo9alawat.warble.chat",
+"https://www.demo9alawat.warble.chat",
+"http://www.demo9alawat.warble.chat",
+
+// Development
+"http://localhost:5173",
+"http://127.0.0.1:5173"
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE"],
   },
 });
-
+setupWebRTC(io);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use(cors({ origin: process.env.APP_ORIGIN, credentials: true }));
+app.use(cors({
+  origin: [
+// Main domain
+"https://warble.chat",
+"http://warble.chat",
+"https://www.warble.chat",
+"http://www.warble.chat",
+
+// ID subdomain
+"https://id.warble.chat",
+"http://id.warble.chat",
+"https://www.id.warble.chat",
+"http://www.id.warble.chat",
+
+// Dashboard subdomain
+"https://dashboard.warble.chat",
+"http://dashboard.warble.chat",
+"https://www.dashboard.warble.chat",
+"http://www.dashboard.warble.chat",
+
+// Support subdomain
+"https://support.warble.chat",
+"http://support.warble.chat",
+"https://www.support.warble.chat",
+"http://www.support.warble.chat",
+
+// App subdomain
+"https://app.warble.chat",
+"http://app.warble.chat",
+"https://www.app.warble.chat",
+"http://www.app.warble.chat",
+
+// Demo subdomain
+"https://demo9alawat.warble.chat",
+"http://demo9alawat.warble.chat",
+"https://www.demo9alawat.warble.chat",
+"http://www.demo9alawat.warble.chat",
+
+// Development
+"http://localhost:5173",
+"http://127.0.0.1:5173"
+  ],
+  credentials: true,
+}));
 
 app.use('/api', protectedRoutes);
 app.use('/api/auth', authRouter);
@@ -49,239 +135,71 @@ app.use('/api/user', userRouter);
 app.use('/api/sessions', sessionRouter);
 app.use('/api/verifications', verificationsRouter);
 app.use('/api/post', postRouter);
+app.use('/api/dash', dashboardRouter);
+app.use('/api/report', reportRouter);
 app.use("/api/notifications", notificationRoutes);
 app.use(express.static(path.join(__dirname, '/client/dist')));
+app.get('/api/health', async (req, res) => {
+  try {
+    // Simulate internal service checks if needed
+    // Example: await db.ping(), await someService.status()
 
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'client', 'dist', 'index.html'));
+    res.status(200).json({
+      status: 'OK',
+      message: 'WARBLE API STATUS : 200 (OK)',
+      timestamp: new Date(),
+    })
+  } catch (err) {
+    console.error("Health check failed:", err)
+    res.status(503).json({
+      status: 'DOWN',
+      message: 'WARBLE API is currently unreachable.',
+      timestamp: new Date(),
+    })
+  }
+})
+app.get('/', (req, res) => {
+  res.send('🌐 WARBLE API is Running.');
 });
-
-// Global error handler
 app.use((err, req, res, next) => {
   const statusCode = err.statusCode || 500;
   const message = err.message || 'Internal Server Error';
   return res.status(statusCode).json({ success: false, statusCode, message });
 });
-
-// ✅ Store online users in memory
 let onlineUsers = {};
 let waitingUsers = [];
 let activePairs = new Map();
-let previousMatches = new Map();
-let PeerOnlineUsers = {};
-
+const roomUsers = {}; 
 io.on("connection", async (socket) => {
   const userId = socket.handshake.query.userId;
+  socket.on('JoinPeeringVideo', ({ roomId, user }) => {
+    socket.join(roomId);
+    if (!roomUsers[roomId]) roomUsers[roomId] = [];
 
-  socket.emit("socketId", socket.id);
+    roomUsers[roomId].push({ ...user, socketId: socket.id });
 
-  socket.on(
-    "initiateCall",
-    ({ targetId, signalData, senderId, senderName }) => {
-      io.to(targetId).emit("incomingCall", {
-        signal: signalData,
-        from: senderId,
-        name: senderName,
+    io.to(roomId).emit('RoomUpdate', {
+      users: roomUsers[roomId],
+      count: roomUsers[roomId].length,
+    });
+  });
+
+  // User leaves a room
+  socket.on('LeavePeeringVideo', ({ roomId, userId }) => {
+    if (roomUsers[roomId]) {
+      roomUsers[roomId] = roomUsers[roomId].filter((u) => u._id !== userId);
+      socket.leave(roomId);
+      io.to(roomId).emit('RoomUpdate', {
+        users: roomUsers[roomId],
+        count: roomUsers[roomId].length,
       });
     }
-  );
-
-  socket.on("changeMediaStatus", ({ mediaType, isActive }) => {
-    socket.broadcast.emit("mediaStatusChanged", {
-      mediaType,
-      isActive,
-    });
   });
 
-  socket.on("sendMessage", ({ targetId, message, senderName }) => {
-    io.to(targetId).emit("receiveMessage", { message, senderName });
-  });
-
-  socket.on("answerCall", (data) => {
-    socket.broadcast.emit("mediaStatusChanged", {
-      mediaType: data.mediaType,
-      isActive: data.mediaStatus,
-    });
-    io.to(data.to).emit("callAnswered", data);
-  });
-
-  socket.on("terminateCall", ({ targetId }) => {
-    io.to(targetId).emit("callTerminated");
-  });
+  // Start matching process
 
 
-  socket.on("joinPeerPage", async ({ userId, username, profilePic }) => {
-    if (!userId || !username) {
-        console.error("❌ Missing user data on joinPeerPage:", { userId, username, profilePic });
-        return;
-    }
-
-    try {
-        const existingUser = await PeerOnline.findOne({ userId });
-
-        if (!existingUser) {
-            // ✅ If the user is new, create an entry
-            await PeerOnline.create({
-                userId,
-                socketId: socket.id,
-                username,
-                profilePic,
-                status: "online"
-            });
-        } else {
-            // ✅ If the user already exists, update the socket ID & status
-            await PeerOnline.updateOne(
-                { userId },
-                { socketId: socket.id, status: "online" }
-            );
-        }
-
-        console.log(`✅ User added to PeerOnline DB: ${userId} (${username})`);
-    } catch (error) {
-        console.error("❌ Error saving user to PeerOnline:", error);
-    }
-
-    // Emit updated peer list
-    const allPeers = await PeerOnline.find({ status: "online" });
-    io.emit("updatePeerList", allPeers);
-});
-
-
-
-
-  socket.on("cameraStateChange", (state) => {
-    const partner = activePairs.get(socket.id);
-    if (partner) {
-      io.to(partner).emit("partnerCameraStateChange", state);
-    }
-  });
-
-  socket.on("micStateChange", (state) => {
-    const partner = activePairs.get(socket.id);
-    if (partner) {
-      io.to(partner).emit("partnerMicStateChange", state);
-    }
-  });
-  socket.on("offer", (offer, partnerId) => {
-    console.log(`📨 Sending offer from ${socket.id} to ${partnerId}`);
-    io.to(partnerId).emit("offer", offer, socket.id);
-});
-
-socket.on("answer", (answer, partnerId) => {
-    console.log(`📨 Sending answer from ${socket.id} to ${partnerId}`);
-    io.to(partnerId).emit("answer", answer);
-});
-
-socket.on("iceCandidate", (candidate, partnerId) => {
-    console.log(`📨 Sending ICE candidate from ${socket.id} to ${partnerId}`);
-    io.to(partnerId).emit("iceCandidate", candidate);
-});
-
-
-  socket.on("newStream", ({ userId, stream }) => {
-    const partner = activePairs.get(socket.id);
-    if (partner) {
-        io.to(partner).emit("partnerStream", { stream });
-    }
-});
-
-  socket.on('leavePeerPage', async () => {
-    if (PeerOnlineUsers[socket.id]) {
-      await PeerOnline.findOneAndUpdate(
-        { userId: PeerOnlineUsers[socket.id].userId },
-        { status: 'offline' }
-      );
-      delete PeerOnlineUsers[socket.id];
-      io.emit('updatePeerList', Object.values(PeerOnlineUsers));
-    }
-  });
-  socket.on("startChat", async () => {
-    console.log("🔎 Waiting users before matching:", waitingUsers);
-
-    if (waitingUsers.length > 0) {
-        let partner = waitingUsers.find((user) => user !== socket.id);
-        if (!partner) {
-            waitingUsers.push(socket.id);
-            return;
-        }
-
-        // ✅ Ensure both users exist in PeerOnline before proceeding
-        const userOnline = await PeerOnline.findOne({ socketId: socket.id });
-        const partnerOnline = await PeerOnline.findOne({ socketId: partner });
-
-        if (!userOnline || !partnerOnline) {
-            console.error("❌ Online user records missing in PeerOnline.");
-            return;
-        }
-
-        // Remove matched users from waiting list
-        waitingUsers = waitingUsers.filter((user) => user !== partner);
-        activePairs.set(socket.id, partner);
-        activePairs.set(partner, socket.id);
-
-        try {
-            // ✅ Fetch user details from the User collection
-            const userUser = await User.findOne({ _id: userOnline.userId }).select("username avatar");
-            const partnerUser = await User.findOne({ _id: partnerOnline.userId }).select("username avatar");
-
-            if (userUser && partnerUser) {
-                const userDetails = {
-                    userId: userOnline.userId,
-                    socketId: userOnline.socketId,
-                    username: userUser.username,
-                    profilePic: userUser.avatar,
-                    status: userOnline.status
-                };
-
-                const partnerDetails = {
-                    userId: partnerOnline.userId,
-                    socketId: partnerOnline.socketId,
-                    username: partnerUser.username,
-                    profilePic: partnerUser.avatar,
-                    status: partnerOnline.status
-                };
-
-                console.log(`✅ Match found: ${userDetails.username} ⇄ ${partnerDetails.username}`);
-
-                io.to(socket.id).emit("matchFound", { partnerId: partner, partnerDetails });
-                io.to(partner).emit("matchFound", { partnerId: socket.id, partnerDetails: userDetails });
-            } else {
-                console.error("❌ User details missing in the database.");
-            }
-        } catch (error) {
-            console.error("❌ Database error while fetching partner details:", error);
-        }
-    } else {
-        waitingUsers.push(socket.id);
-    }
-});
-
-
-
-
-
-
-  socket.on("skipChat", () => {
-    const partner = activePairs.get(socket.id);
-    if (partner) {
-      io.to(partner).emit("partnerDisconnected");
-      activePairs.delete(partner);
-      activePairs.delete(socket.id);
-    }
-    waitingUsers.push(socket.id);
-    socket.emit("skipSuccess");
-    socket.emit("startChat");
-  });
-
-  socket.on("endChat", () => {
-    const partner = activePairs.get(socket.id);
-    if (partner) {
-      io.to(partner).emit("partnerDisconnected");
-      activePairs.delete(partner);
-    }
-    waitingUsers = waitingUsers.filter((id) => id !== socket.id);
-  });
-
+  // Handle WebRTC signaling data exchange
 
 
   socket.on("joinPostRoom", (postId) => {
@@ -397,6 +315,19 @@ socket.on("iceCandidate", (candidate, partnerId) => {
   });
 
   socket.on("disconnect", async () => {
+     waitingUsers = waitingUsers.filter((id) => id !== socket.id);
+    const partner = activePairs.get(socket.id);
+    if (partner) {
+      io.to(partner).emit("partnerDisconnected");
+      activePairs.delete(partner);
+    }
+    for (const roomId in roomUsers) {
+      roomUsers[roomId] = roomUsers[roomId].filter((u) => u.socketId !== socket.id);
+      io.to(roomId).emit('RoomUpdate', {
+        users: roomUsers[roomId],
+        count: roomUsers[roomId].length,
+      });
+    }
     if (userId) {
 
 

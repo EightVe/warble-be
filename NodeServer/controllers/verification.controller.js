@@ -22,16 +22,153 @@ const generateOTP = () => {
   return crypto.randomInt(100000, 999999).toString();
 };
 
+const generateEmailVerifTemplate = (otp) => {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>Static Template</title>
 
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body
+    style="
+      margin: 0;
+      font-family: 'Poppins', sans-serif;
+      background: #ffffff;
+      font-size: 14px;
+    "
+  >
+    <div
+      style="
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 45px 30px 60px;
+        background:#ededed;
+        background-repeat: no-repeat;
+        background-size: 800px 452px;
+        background-position: top center;
+        font-size: 14px;
+        color: #434343;
+      "
+    >
+      <header>
+        <table style="width: 100%;">
+          <tbody>
+            <tr style="height: 0;">
+              <td style="display:flex; justify-content: center; align-items: center;">
+                <img
+                  alt="warble_logo"
+                  src="https://i.ibb.co/DgmQV8Q2/mainLogo.png"
+                  height="40px"
+                />
+                <p style="font-size:16px; font-weight:500; color:#ff5757">Warble</p>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </header>
+
+      <main>
+        <div
+          style="
+            margin: 0;
+            margin-top: 70px;
+            padding: 92px 30px 115px;
+            background: #ffffff;
+            border-radius: 30px;
+            text-align: center;
+          "
+        >
+          <div style="width: 100%; max-width: 489px; margin: 0 auto;">
+            <h1
+              style="
+                margin: 0;
+                font-size: 24px;
+                font-weight: 500;
+                color: #1f1f1f;
+              "
+            >
+              Email Verification
+            </h1>
+            <p
+              style="
+                margin: 0;
+                margin-top: 17px;
+                font-size: 16px;
+                font-weight: 500;
+              "
+            >
+            </p>
+            <p
+              style="
+                margin: 0;
+                margin-top: 17px;
+                font-weight: 400;
+                letter-spacing: 0.56px;
+              "
+            >
+             To verify your email please enter the OTP-Code bellow, this code will expire in
+              <span style="font-weight: 600; color: #1f1f1f;">10 minutes</span>.
+            </p>
+            
+          
+          </div>
+          <div style="padding-top : 20px;">
+          <p
+                          style="
+                margin: 0;
+                font-size: 25px;
+                font-weight: 400;
+                color : #ff5757;
+                padding: 10px 20px;
+                border-radius : 10px;
+                margin-top:10px;
+                text-decoration : none;
+              ">${otp}</p>
+          </div>
+        </div>
+      </main>
+
+      <footer
+        style="
+          width: 100%;
+          max-width: 490px;
+          margin: 20px auto 0;
+          text-align: center;
+          border-top: 1px solid #e6ebf1;
+        "
+      >
+        <p style="margin: 0; margin-top: 16px; color: #434343;">
+          Copyright © 2025 Eightve LTD. All rights reserved.
+        </p>
+        <p style="margin: 0; margin-top: 1px; color: #434343; font-size:11px">
+              warble.chat is a trademark of Eightve LTD. All rights reserved. You may unsubscribe at any time.
+          </p>
+      </footer>
+    </div>
+  </body>
+</html>
+  
+
+    
+  `;
+};
 export const sendOTP = async (req, res) => {
   const { userId, email } = req.body;
   const otp = generateOTP();
-
+  const emailTemplate = generateEmailVerifTemplate(otp);
   const mailOptions = {
-    from: 'vexobyte8@gmail.com',
+    from: 'no-reply@warble.chat',
     to: email,
-    subject: 'Your OTP Code',
-    text: `Your OTP code is ${otp}. It will expire in 10 minutes.`,
+    subject: 'Warble - Email Verification OTP',
+    html: emailTemplate,
   };
 
   try {
@@ -78,134 +215,138 @@ const generatePasswordResetToken = () => {
 };
 const generateResetEmailTemplate = (url) => {
   return `
-  <!DOCTYPE html>
-  <html lang="en">
-    <head>
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <meta http-equiv="X-UA-Compatible" content="ie=edge" />
-      <title>Static Template</title>
-  
-      <link
-        href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap"
-        rel="stylesheet"
-      />
-    </head>
-    <body
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>Static Template</title>
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body
+    style="
+      margin: 0;
+      font-family: 'Poppins', sans-serif;
+      background: #ffffff;
+      font-size: 14px;
+    "
+  >
+    <div
       style="
-        margin: 0;
-        font-family: 'Poppins', sans-serif;
-        background: #ffffff;
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 45px 30px 60px;
+        background:#ededed;
+        background-repeat: no-repeat;
+        background-size: 800px 452px;
+        background-position: top center;
         font-size: 14px;
+        color: #434343;
       "
     >
-      <div
-        style="
-          max-width: 680px;
-          margin: 0 auto;
-          padding: 45px 30px 60px;
-          background:#ededed;
-          background-repeat: no-repeat;
-          background-size: 800px 452px;
-          background-position: top center;
-          font-size: 14px;
-          color: #434343;
-        "
-      >
-        <header>
-          <table style="width: 100%;">
-            <tbody>
-              <tr style="height: 0;">
-                <td>
-                  <img
-                    alt=""
-                    src="https://i.ibb.co/hYXP1wD/cclogo.png"
-                    height="40px"
-                  />
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </header>
-  
-        <main>
-          <div
-            style="
-              margin: 0;
-              margin-top: 70px;
-              padding: 92px 30px 115px;
-              background: #ffffff;
-              border-radius: 30px;
-              text-align: center;
-            "
-          >
-            <div style="width: 100%; max-width: 489px; margin: 0 auto;">
-              <h1
-                style="
-                  margin: 0;
-                  font-size: 24px;
-                  font-weight: 500;
-                  color: #1f1f1f;
-                "
-              >
-                Password Reset
-              </h1>
-              <p
-                style="
-                  margin: 0;
-                  margin-top: 17px;
-                  font-size: 16px;
-                  font-weight: 500;
-                "
-              >
-              </p>
-              <p
-                style="
-                  margin: 0;
-                  margin-top: 17px;
-                  font-weight: 500;
-                  letter-spacing: 0.56px;
-                "
-              >
-               To reset your password click on the button bellow, after that you can reset your password freely. This link will be expired after
-                <span style="font-weight: 600; color: #1f1f1f;">1 hour</span>.
-              </p>
-              
-            
-            </div>
-            <div style="padding-top : 20px;">
-            <a href="${url}" target="_blank" 
-                            style="
-                  margin: 0;
-                  font-size: 16px;
-                  font-weight: 500;
-                  background-color: #2aa2ff;
-                  color : #1c1c1c;
-                  padding: 10px 20px;
-                  border-radius : 999px;
-                  margin-top:10px;
-                  text-decoration : none;
-                ">Reset Password</a>
-            </div>
-          </div>
-        </main>
-  
-        <footer
+      <header>
+        <table style="width: 100%;">
+          <tbody>
+            <tr style="height: 0;">
+              <td style="display:flex; justify-content: center; align-items: center;">
+                <img
+                  alt="warble_logo"
+                  src="https://i.ibb.co/DgmQV8Q2/mainLogo.png"
+                  height="40px"
+                />
+                <p style="font-size:16px; font-weight:500; color:#ff5757">Warble</p>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </header>
+
+      <main>
+        <div
           style="
-            width: 100%;
-            max-width: 490px;
-            margin: 20px auto 0;
+            margin: 0;
+            margin-top: 70px;
+            padding: 92px 30px 115px;
+            background: #ffffff;
+            border-radius: 30px;
             text-align: center;
-            border-top: 1px solid #e6ebf1;
           "
         >
-          <p style="margin: 0; margin-top: 16px; color: #434343;">
-            Copyright © 2024 Clean Colab. All rights reserved.
+          <div style="width: 100%; max-width: 489px; margin: 0 auto;">
+            <h1
+              style="
+                margin: 0;
+                font-size: 24px;
+                font-weight: 500;
+                color: #1f1f1f;
+              "
+            >
+              Password Reset Request
+            </h1>
+            <p
+              style="
+                margin: 0;
+                margin-top: 17px;
+                font-size: 16px;
+                font-weight: 500;
+              "
+            >
+            </p>
+            <p
+              style="
+                margin: 0;
+                margin-top: 17px;
+                font-weight: 400;
+                letter-spacing: 0.56px;
+              "
+            >
+             To reset your password click on the button bellow, after that you can reset your password freely. This link will be expired after
+              <span style="font-weight: 600; color: #1f1f1f;">1 hour</span>.
+            </p>
+            
+          
+          </div>
+          <div style="padding-top : 20px;">
+          <a href="${url}" target="_blank" 
+                          style="
+                margin: 0;
+                font-size: 14px;
+                font-weight: 400;
+                background-color: #ff5757;
+                color : #fff;
+                padding: 10px 20px;
+                border-radius : 10px;
+                margin-top:10px;
+                text-decoration : none;
+              ">Reset Password</a>
+          </div>
+        </div>
+      </main>
+
+      <footer
+        style="
+          width: 100%;
+          max-width: 490px;
+          margin: 20px auto 0;
+          text-align: center;
+          border-top: 1px solid #e6ebf1;
+        "
+      >
+        <p style="margin: 0; margin-top: 16px; color: #434343;">
+          Copyright © 2025 Eightve LTD. All rights reserved.
+        </p>
+        <p style="margin: 0; margin-top: 1px; color: #434343; font-size:11px">
+              warble.chat is a trademark of Eightve LTD. All rights reserved. You may unsubscribe at any time.
           </p>
-        </footer>
-      </div>
-    </body>
-  </html>
+      </footer>
+    </div>
+  </body>
+</html>
   
 
     
@@ -232,8 +373,9 @@ export const forgotPassword = async (req, res) => {
     const emailTemplate = generateResetEmailTemplate(resetUrl);
 
     await transporter.sendMail({
+      from: 'no-reply@warble.chat',
       to: user.emailAddress,
-      subject: 'Password Reset Request',
+      subject: 'Warble - Password Reset Request',
       html: emailTemplate,
     });
 
